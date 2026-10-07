@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from spin_m1 import speed_stages, spin
+from spin import speed_stages, spin
 
 assert speed_stages(10, None) == [10]
 assert [round(speed * 60) for speed in speed_stages(10, 1200)] == list(range(600, 1201, 100))

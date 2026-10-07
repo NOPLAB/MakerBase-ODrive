@@ -4,7 +4,7 @@ import time
 
 import odrive
 
-from calibrate_m1 import check_errors
+from calibrate import check_errors
 
 
 def speed_stages(speed, maximum_rpm):
@@ -15,15 +15,17 @@ def speed_stages(speed, maximum_rpm):
     return [rpm / 60 for rpm in range(600, maximum_rpm + 1, 100)]
 
 
-def spin(speed, current, duration, accel, bandwidth, current_limit=6, maximum_rpm=None):
+def spin(speed, current, duration, accel, bandwidth, current_limit=6, maximum_rpm=None, *, motor="m1"):
+    if motor not in ("m0", "m1"):
+        raise ValueError("Motor must be m0 or m1")
     stages = speed_stages(speed, maximum_rpm)
     if not all(math.isfinite(value) for value in (speed, current, duration, accel, bandwidth, current_limit)) or not 9 <= speed <= 10 or not 1 <= current <= current_limit <= 6 or not 1 <= duration <= 30 or not 50 <= accel <= 200 or not 500 <= bandwidth <= 3000:
         raise ValueError("Invalid bounded motor-test parameters")
     device = odrive.find_any(serial_number="355B30693133", timeout=15)
-    axis = device.axis1
+    axis = device.axis0 if motor == "m0" else device.axis1
     if (device.fw_version_major, device.fw_version_minor, device.fw_version_revision) != (0, 5, 1):
         raise RuntimeError("This script requires firmware 0.5.1")
-    if device.axis0.current_state != 1 or axis.current_state != 1:
+    if device.axis0.current_state != 1 or device.axis1.current_state != 1:
         raise RuntimeError("Both axes must be IDLE")
     if not axis.motor.is_calibrated or axis.motor.config.pole_pairs != 7:
         raise RuntimeError("Expected calibrated 7-pole-pair motor")
@@ -60,7 +62,7 @@ def spin(speed, current, duration, accel, bandwidth, current_limit=6, maximum_rp
     stage_index = 0
     peak_current = 0
     try:
-        print(f"M1 sensorless test: {speed * 60:.0f}..{stages[-1] * 60:.0f}rpm, {duration}s per stage, ramp {current}A, limit {current_limit}A, current bandwidth {bandwidth}rad/s", flush=True)
+        print(f"{motor.upper()} sensorless test: {speed * 60:.0f}..{stages[-1] * 60:.0f}rpm, {duration}s per stage, ramp {current}A, limit {current_limit}A, current bandwidth {bandwidth}rad/s", flush=True)
         axis.requested_state = 5
         started = time.monotonic()
         holding_since = None
@@ -72,7 +74,7 @@ def spin(speed, current, duration, accel, bandwidth, current_limit=6, maximum_rp
             check_errors(axis)
             state = axis.current_state
             if state != 5:
-                raise RuntimeError(f"Unexpected M1 state: {state}")
+                raise RuntimeError(f"Unexpected {motor.upper()} state: {state}")
             velocity = axis.sensorless_estimator.vel_estimate
             voltage = device.vbus_voltage
             measured_current = math.hypot(axis.motor.current_control.Id_measured, axis.motor.current_control.Iq_measured)
@@ -122,7 +124,7 @@ def spin(speed, current, duration, accel, bandwidth, current_limit=6, maximum_rp
             time.sleep(0.05)
         axis.config.enable_watchdog = False
         axis.controller.input_vel = 0
-        print("M1 IDLE confirmed; motor output disabled. Test settings not saved.", flush=True)
+        print(f"{motor.upper()} IDLE confirmed; motor output disabled. Test settings not saved.", flush=True)
     check_errors(axis)
     if len(samples) < 3 or any(abs(value - speed) > speed * 0.03 for value in samples[-3:]):
         raise RuntimeError("Sensorless speed tracking did not pass")
@@ -130,7 +132,8 @@ def spin(speed, current, duration, accel, bandwidth, current_limit=6, maximum_rp
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Timed unloaded M1 sensorless test on firmware 0.5.1")
+    parser = argparse.ArgumentParser(description="Timed unloaded M0/M1 sensorless test on firmware 0.5.1")
+    parser.add_argument("--motor", choices=("m0", "m1"), default="m1", help="Motor output to test (default: m1)")
     parser.add_argument("--speed", type=float, default=10)
     parser.add_argument("--current", type=float, default=2)
     parser.add_argument("--duration", type=float, default=3)
@@ -141,4 +144,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if not 9 <= args.speed <= 10 or not 1 <= args.current <= 3 or not 1 <= args.duration <= 30 or not 50 <= args.accel <= 200 or not 500 <= args.bandwidth <= 3000:
         parser.error("Require speed 9..10 turns/s, current 1..3A, duration 1..30s, accel 50..200 rad/s^2, bandwidth 500..3000 rad/s")
-    spin(args.speed, args.current, args.duration, args.accel, args.bandwidth, args.current_limit, args.max_rpm)
+    spin(args.speed, args.current, args.duration, args.accel, args.bandwidth, args.current_limit, args.max_rpm, motor=args.motor)

@@ -18,10 +18,12 @@ def check_errors(axis):
         if component.error:
             errors.append(f"{name}={component.error:#x}")
     if errors:
-        raise RuntimeError("M1 errors: " + ", ".join(errors))
+        raise RuntimeError("Axis errors: " + ", ".join(errors))
 
 
-def calibrate(serial, current):
+def calibrate(serial, current, *, motor="m1"):
+    if motor not in ("m0", "m1"):
+        raise ValueError("Motor must be m0 or m1")
     device = odrive.find_any(serial_number=serial, timeout=15)
     if (device.fw_version_major, device.fw_version_minor, device.fw_version_revision) != (0, 5, 1):
         raise RuntimeError("This script requires firmware 0.5.1")
@@ -29,7 +31,7 @@ def calibrate(serial, current):
         raise RuntimeError("Both axes must be IDLE")
     if not 10 <= device.vbus_voltage <= 14:
         raise RuntimeError(f"Expected approximately 12V, got {device.vbus_voltage}V")
-    axis = device.axis1
+    axis = device.axis0 if motor == "m0" else device.axis1
     check_errors(axis)
     settings = {
         "motor_type": 0,
@@ -47,7 +49,7 @@ def calibrate(serial, current):
     axis.sensorless_estimator.config.pm_flux_linkage = flux
     if not math.isclose(axis.sensorless_estimator.config.pm_flux_linkage, flux, rel_tol=1e-5):
         raise RuntimeError("Flux linkage verification failed")
-    print(f"M1 calibration: {current}A, {device.vbus_voltage:.2f}V", flush=True)
+    print(f"{motor.upper()} calibration: {current}A, {device.vbus_voltage:.2f}V", flush=True)
     try:
         axis.requested_state = 4
         time.sleep(0.25)
@@ -72,11 +74,11 @@ def calibrate(serial, current):
         pass
     time.sleep(3)
     device = odrive.find_any(serial_number=serial, timeout=15)
-    axis = device.axis1
+    axis = device.axis0 if motor == "m0" else device.axis1
     check_errors(axis)
     if not device.user_config_loaded or not axis.motor.config.pre_calibrated or not axis.motor.is_calibrated:
         raise RuntimeError("Saved calibration verification failed")
-    if device.axis0.current_state != 1 or axis.current_state != 1:
+    if device.axis0.current_state != 1 or device.axis1.current_state != 1:
         raise RuntimeError("Expected both axes IDLE after saving")
     if not math.isclose(axis.motor.config.phase_resistance, resistance, rel_tol=1e-5) or not math.isclose(axis.motor.config.phase_inductance, inductance, rel_tol=1e-5):
         raise RuntimeError("Saved motor parameters do not match")
@@ -84,10 +86,11 @@ def calibrate(serial, current):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Calibrate M1 D6374-150KV on the confirmed 12V setup")
+    parser = argparse.ArgumentParser(description="Calibrate M0/M1 D6374-150KV on the confirmed 12V setup")
+    parser.add_argument("--motor", choices=("m0", "m1"), default="m1", help="Motor output to calibrate (default: m1)")
     parser.add_argument("--serial", default="355B30693133")
     parser.add_argument("--current", type=float, default=5)
     args = parser.parse_args()
     if not 1 <= args.current <= 10:
         parser.error("--current must be between 1 and 10A")
-    calibrate(args.serial, args.current)
+    calibrate(args.serial, args.current, motor=args.motor)

@@ -1,4 +1,4 @@
-# MakerBase v3.6/56V: M1 sensorless firmware and tools
+# MakerBase v3.6/56V: sensorless firmware and motor tools
 
 Modified ODrive 0.5.1 firmware and tools for a MakerBase v3.6/56V board.
 Maintainer: nop <noplab90@gmail.com>.
@@ -27,6 +27,7 @@ Install uv and run all commands from this repository's root:
 uv sync --locked
 uv run python tests/test_sensorless_units.py
 uv run python tests/test_spin_stages.py
+uv run python tests/test_motor_selection.py
 uv run odrivetool --help
 ```
 
@@ -36,9 +37,23 @@ The project uses Python 3.11 or newer and pins the ODrive tool version to
 ## Calibration and rotation
 
 ```powershell
-uv run python scripts/calibrate_m1.py
-uv run python scripts/spin_m1.py --duration 30
+uv run python scripts/calibrate.py --motor m1
+uv run python scripts/spin.py --motor m1 --duration 30
 ```
+
+Both scripts accept `--motor m0` (axis0) or `--motor m1` (axis1), defaulting
+to `m1` when omitted. For M0:
+
+```powershell
+uv run python scripts/calibrate.py --motor m0
+uv run python scripts/spin.py --motor m0 --duration 30
+```
+
+The same D6374-150KV, 7-pole-pair and approximately 12V setup is required
+on the selected output. The recorded physical trials below were on M1.
+Both axes must be IDLE before starting. Calibration verifies the selected
+axis again after reconnecting; rotation cleanup stops that same axis.
+Firmware flashing and USB repair operate on the entire board, not one motor.
 
 Calibration uses 5A. The default rotation test uses 600RPM, a 2A startup
 current, a 6A current limit and a 2-second watchdog. The hold timer starts
@@ -50,7 +65,7 @@ RPM is a sensorless estimate, not an external tachometer measurement.
 For a staged 600-1200RPM test in 100RPM steps:
 
 ```powershell
-uv run python scripts/spin_m1.py --current-limit 2 --current 1.5 --accel 50 --duration 3 --max-rpm 1200
+uv run python scripts/spin.py --motor m1 --current-limit 2 --current 1.5 --accel 50 --duration 3 --max-rpm 1200
 ```
 
 Startup current is 1.5A, startup acceleration is 50 electrical rad/s^2,

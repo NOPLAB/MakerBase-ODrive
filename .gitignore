@@ -1,0 +1,21 @@
+# Python and local environments
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Local tools, downloaded archives and runtime records
+/build-tools/
+/archives/
+/logs/
+/backups/
+
+# Firmware build outputs
+**/build/
+**/.tup/
+*.o
+*.obj
+*.elf
+*.hex
+*.map

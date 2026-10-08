@@ -75,7 +75,9 @@ for motor in ("m0", "m1", None):
     other = device.axis1 if motor == "m0" else device.axis0
     other_config = deepcopy(other.motor.config)
     clock = FakeClock()
-    argv = ["spin.py", "--duration", "1", "--bandwidth", "500"]
+    selected.sensorless_estimator.vel_estimate = 20
+    selected.motor.current_control.Iq_measured = 11
+    argv = ["spin.py", "--speed", "20", "--current", "7", "--current-limit", "10", "--duration", "1", "--bandwidth", "500"]
     if motor is not None:
         argv += ["--motor", motor]
 
@@ -87,6 +89,10 @@ for motor in ("m0", "m1", None):
         runpy.run_path(str(scripts / "spin.py"), run_name="__main__")
 
     # Then only the selected output was run, configured, and returned to IDLE.
+    assert selected.motor.config.current_lim == 10
+    assert selected.motor.config.current_lim_margin == 2
+    assert selected.controller.config.vel_limit == 24
+    assert selected.config.sensorless_ramp.current == 7
     assert selected.requested_states == [5, 1]
     assert selected.current_state == 1
     assert selected.controller.input_vel == 0
@@ -157,3 +163,28 @@ for operation in (calibrate, spin):
     assert device.axis0.requested_states == []
 
 print("M0/M1 CLI selection, default, cleanup, reconnect and IDLE interlock checks passed")
+
+# A short load dip recovers, sustained loss and current above 12A still stop.
+for failure in (None, "tracking", "current"):
+    device = make_device()
+    axis = device.axis1
+    clock = FakeClock()
+
+    def advance(seconds):
+        clock.advance(seconds)
+        axis.sensorless_estimator.vel_estimate = 9 if 1 <= clock.now < (1.5 if failure is None else 4) else 10
+        axis.motor.current_control.Iq_measured = 13 if failure == "current" and clock.now >= 1 else 11
+
+    with patch("odrive.find_any", return_value=device), \
+            patch("time.monotonic", clock.monotonic), \
+            patch("time.sleep", advance):
+        try:
+            spin(10, 2, 3, 100, 500)
+        except RuntimeError as error:
+            assert failure is not None
+            assert ("tracking lost for 1s" if failure == "tracking" else "Unsafe current") in str(error)
+        else:
+            assert failure is None
+    assert axis.current_state == 1
+    assert axis.controller.input_vel == 0
+print("10A + 2A margin and transient load recovery checks passed")

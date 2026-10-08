@@ -8,7 +8,8 @@ from spin import speed_stages, spin
 assert speed_stages(10, None) == [10]
 assert [round(speed * 60) for speed in speed_stages(10, 1200)] == list(range(600, 1201, 100))
 assert [round(speed * 60) for speed in speed_stages(10, 2000)] == list(range(600, 2001, 100))
-for maximum in (500, 650, 2100):
+assert speed_stages(10, 2100)[-1] == 35
+for maximum in (500, 650):
     try:
         speed_stages(10, maximum)
     except ValueError:

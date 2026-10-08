@@ -10,17 +10,17 @@ from calibrate import check_errors
 def speed_stages(speed, maximum_rpm):
     if maximum_rpm is None:
         return [speed]
-    if not math.isclose(speed, 10) or not 600 <= maximum_rpm <= 2000 or maximum_rpm % 100:
-        raise ValueError("Staged test requires 600rpm start and 600..2000rpm maximum in 100rpm steps")
+    if not math.isclose(speed, 10) or maximum_rpm < 600 or maximum_rpm % 100:
+        raise ValueError("Staged test requires 600rpm start and maximum of at least 600rpm in 100rpm steps")
     return [rpm / 60 for rpm in range(600, maximum_rpm + 1, 100)]
 
 
-def spin(speed, current, duration, accel, bandwidth, current_limit=6, maximum_rpm=None, *, motor="m1"):
+def spin(speed, current, duration, accel, bandwidth, current_limit=10, maximum_rpm=None, *, motor="m1"):
     if motor not in ("m0", "m1"):
         raise ValueError("Motor must be m0 or m1")
     stages = speed_stages(speed, maximum_rpm)
-    if not all(math.isfinite(value) for value in (speed, current, duration, accel, bandwidth, current_limit)) or not 9 <= speed <= 10 or not 1 <= current <= current_limit <= 6 or not 1 <= duration <= 30 or not 50 <= accel <= 200 or not 500 <= bandwidth <= 3000:
-        raise ValueError("Invalid bounded motor-test parameters")
+    if not all(math.isfinite(value) for value in (speed, current, duration, accel, bandwidth, current_limit)) or speed <= 0 or not 0 < current <= current_limit or not 1 <= duration <= 30 or not 50 <= accel <= 200 or not 500 <= bandwidth <= 3000:
+        raise ValueError("Invalid motor-test parameters")
     device = odrive.find_any(serial_number="355B30693133", timeout=15)
     axis = device.axis0 if motor == "m0" else device.axis1
     if (device.fw_version_major, device.fw_version_minor, device.fw_version_revision) != (0, 5, 1):
@@ -36,8 +36,7 @@ def spin(speed, current, duration, accel, bandwidth, current_limit=6, maximum_rp
     check_errors(axis)
     axis.motor.config.direction = 1
     axis.motor.config.current_lim = current_limit
-    if current_limit == 2:
-        axis.motor.config.current_lim_margin = 2
+    axis.motor.config.current_lim_margin = 2
     axis.motor.config.current_control_bandwidth = bandwidth
     if not math.isclose(axis.motor.current_control.p_gain, bandwidth * axis.motor.config.phase_inductance, rel_tol=1e-5):
         raise RuntimeError("Current-controller gain update failed")
@@ -67,6 +66,7 @@ def spin(speed, current, duration, accel, bandwidth, current_limit=6, maximum_rp
         started = time.monotonic()
         holding_since = None
         stable_samples = 0
+        tracking_lost_since = None
         next_report = started
         stage_started = started
         while True:
@@ -81,11 +81,12 @@ def spin(speed, current, duration, accel, bandwidth, current_limit=6, maximum_rp
             temperature = axis.fet_thermistor.temperature
             if not math.isfinite(velocity) or abs(velocity) > max(stages) * 1.2 or not 10 <= voltage <= 14:
                 raise RuntimeError(f"Unsafe telemetry: {velocity} turns/s, {voltage}V")
-            if not math.isfinite(measured_current) or measured_current > (4 if current_limit == 2 else 8) or not math.isfinite(temperature) or temperature > 60:
+            if not math.isfinite(measured_current) or measured_current > current_limit + axis.motor.config.current_lim_margin or not math.isfinite(temperature) or temperature > 60:
                 raise RuntimeError(f"Unsafe current/temperature: {measured_current:.2f}A, {temperature:.1f}C")
             peak_current = max(peak_current, measured_current)
             ramp_complete = maximum_rpm is None or abs(axis.controller.vel_setpoint - speed) < 0.01
             if axis.lockin_state == 0 and ramp_complete and abs(velocity - speed) <= speed * 0.03:
+                tracking_lost_since = None
                 stable_samples += 1
                 if holding_since is None and stable_samples >= 3:
                     holding_since = time.monotonic()
@@ -94,10 +95,13 @@ def spin(speed, current, duration, accel, bandwidth, current_limit=6, maximum_rp
             else:
                 stable_samples = 0
                 if holding_since is not None:
-                    raise RuntimeError("Speed tracking lost during timed hold")
+                    if tracking_lost_since is None:
+                        tracking_lost_since = time.monotonic()
+                    elif time.monotonic() - tracking_lost_since >= 1:
+                        raise RuntimeError("Speed tracking lost for 1s during timed hold")
             if holding_since is None and time.monotonic() - stage_started > (16 if stage_index == 0 else 8):
                 raise TimeoutError(f"{speed * 60:.0f}rpm tracking not established; last stable stage {stages[stage_index - 1] * 60 if stage_index else 0:.0f}rpm")
-            if holding_since is not None and time.monotonic() - holding_since >= duration:
+            if holding_since is not None and stable_samples >= 3 and time.monotonic() - holding_since >= duration:
                 print(f"Stage passed: target={speed * 60:.0f}rpm, estimated={sum(samples[-3:]) / 3 * 60:.0f}rpm", flush=True)
                 stage_index += 1
                 if stage_index == len(stages):
@@ -139,9 +143,9 @@ if __name__ == "__main__":
     parser.add_argument("--duration", type=float, default=3)
     parser.add_argument("--accel", type=float, default=100)
     parser.add_argument("--bandwidth", type=float, default=2000)
-    parser.add_argument("--current-limit", type=float, default=6)
+    parser.add_argument("--current-limit", type=float, default=10)
     parser.add_argument("--max-rpm", type=int)
     args = parser.parse_args()
-    if not 9 <= args.speed <= 10 or not 1 <= args.current <= 3 or not 1 <= args.duration <= 30 or not 50 <= args.accel <= 200 or not 500 <= args.bandwidth <= 3000:
-        parser.error("Require speed 9..10 turns/s, current 1..3A, duration 1..30s, accel 50..200 rad/s^2, bandwidth 500..3000 rad/s")
+    if not 1 <= args.duration <= 30 or not 50 <= args.accel <= 200 or not 500 <= args.bandwidth <= 3000:
+        parser.error("Require duration 1..30s, accel 50..200 rad/s^2, bandwidth 500..3000 rad/s")
     spin(args.speed, args.current, args.duration, args.accel, args.bandwidth, args.current_limit, args.max_rpm, motor=args.motor)

@@ -56,10 +56,16 @@ axis again after reconnecting; rotation cleanup stops that same axis.
 Firmware flashing and USB repair operate on the entire board, not one motor.
 
 Calibration uses 5A. The default rotation test uses 600RPM, a 2A startup
-current, a 6A current limit and a 2-second watchdog. The hold timer starts
+current, a 10A current limit with a 2A margin and a 2-second watchdog. The hold timer starts
 after estimated speed stabilizes; the axis returns to IDLE on exit.
 Only calibration results are saved. Rotation-test settings are not saved,
 and automatic rotation at power-up is not configured.
+CLI speed and current have no fixed upper bounds; values must be finite and
+positive, with startup current no greater than `--current-limit` (default 10A).
+Controller velocity limiting and runtime telemetry checks remain enabled.
+Current monitoring follows the requested limit plus the 2A margin. During a
+hold, speed deviations beyond 3% have a 1-second recovery window; completion
+requires three consecutive samples within 3%.
 RPM is a sensorless estimate, not an external tachometer measurement.
 
 For a staged 600-1200RPM test in 100RPM steps:
@@ -77,7 +83,7 @@ On 2026-10-06, all stages through 1200RPM passed. The final estimated
 speed was 1201RPM, sampled peak current was 2.17A, and the axis finished
 IDLE without errors. This does not establish a maximum speed at 2A.
 
-`--max-rpm 2000` permits higher stages. Each hold starts only after the
+`--max-rpm` permits higher stages in 100RPM steps without a fixed upper bound. Each hold starts only after the
 command ramp finishes and estimated speed converges within 3%.
 In the 2026-10-06 trial, stages through 1200RPM held for 3 seconds each,
 but overcurrent protection tripped during the 1300RPM hold:
